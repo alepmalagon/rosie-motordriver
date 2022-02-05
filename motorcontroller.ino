@@ -3,18 +3,24 @@
 //Code developed by Gustavo Viera Lopez
 //Code developed by Silvio Delgado
 //Ask gvieralopez@gmail.com for the hardware schematics
+
+
 //////////////////////////////////////////////////////////////////////////
 //Defining Arduino's Pins
 /////////////////////////////////////////////////////////////////////////////
-#define IN1                 4
-#define IN2                 7
-#define IN3                 8
-#define IN4                 9
-#define PWM1                5
-#define PWM2                6
+
+#define IN1                 7
+#define IN2                 6
+#define IN3                 12
+#define IN4                 13
+#define PWM1                9
+#define PWM2                10
+#define STBY                8
+
 #define Encoder1            2
-#define Encoder2            3
+#define Encoder2            4
 #define SetpointThreshold   0.01
+
 /////////////////////////////////////////////////////////////////////////////
 //Serial port protocol commands
 /////////////////////////////////////////////////////////////////////////////
@@ -44,6 +50,10 @@ volatile char sense2;
 volatile float pulses_factor;
 char buffer[4];
 uint8_t *ptr;
+char buff[10];
+byte reload = 0x9C; 
+
+
 /////////////////////////////////////////////////////////////////////////////
 //Defining PID variables
 /////////////////////////////////////////////////////////////////////////////
@@ -61,18 +71,9 @@ volatile char samplingFlag; // Raises when is time to send a sample
 /////////////////////////////////////////////////////////////////////////////
 //Defining funtions
 /////////////////////////////////////////////////////////////////////////////
-void setPWM(int motor, char duty_cycle)
-{
-    if(motor==1)
-    {
-        OCR0B = duty_cycle;
-    }
-    else
-    {
-        OCR0A = duty_cycle; 
-    }   
-}
-/////////////////////////////////////////////////////////////////////////////
+
+
+
 void catchPulses1()
 {
     if(sense1==CLOCKWISE)
@@ -97,22 +98,30 @@ void catchPulses2()
     }
 }
 /////////////////////////////////////////////////////////////////////////////
+
 void setup() 
 {
-    Serial.begin(9600);
+    Serial.println("Setup");
 
     InitMotors();
-    InitPWM();
-    InitSampling();
+    //InitPWM();
+    //InitSampling();
+/*    TCCR0B = 0; 
+    OCR2A = reload;
+    TCCR2A = 1<<WGM21;
+    TCCR2B = (1<<CS22) | (1<<CS21) | (1<<CS20);
+    TIMSK2 = (1<<OCIE2A);*/
 
     interrupts();
+    setpoint1 = 0.1f;
+    setpoint2 = -0.1f;
 
-    setpoint1 = 0.0f;
-    setpoint2 = 0.0f;
 } 
 ///////////////////////////////////////////////////////////////////////////// 
 void loop() 
 {
+    driveMotor(1,-255);
+    driveMotor(2,255);
     if (samplingFlag)
     {       
         ptr = ((uint8_t*)&speed1);
@@ -141,7 +150,6 @@ void loop()
             constant_kd = *(float*)buffer;
             break;
         case COMMAND_SETPOINT:
-            digitalWrite(13,HIGH);
             // while(Serial.available() < 4);
             // Serial.readBytes(buffer, 4);
             // setpoint1 = *(float*)buffer;
@@ -195,32 +203,31 @@ void driveMotor(char motor, float speed)
         {
             if(direction==CLOCKWISE)
             {
-                digitalWrite(IN1,HIGH);
-                digitalWrite(IN2,LOW);
+                digitalWrite(IN1,HIGH); 
+                digitalWrite(IN2,LOW); 
             }
             else
             {
-                digitalWrite(IN1,LOW);
-                digitalWrite(IN2,HIGH);             
+                digitalWrite(IN1,LOW); 
+                digitalWrite(IN2,HIGH);           
             }
-            sense1 = direction;
-
-            setPWM(motor, (char)speed); 
+            analogWrite(PWM1, speed); 
+            //setPWM(motor, (char)speed); 
         }
     }
     else
     {
         if(!speed)
         {
-            digitalWrite(IN3,LOW);
-            digitalWrite(IN4,LOW);
+            digitalWrite(IN3,LOW); 
+            digitalWrite(IN4,LOW); 
         }
         else
         {
             if(direction==CLOCKWISE)
             {
-                digitalWrite(IN3,LOW);
-                digitalWrite(IN4,HIGH);
+                digitalWrite(IN3,LOW); 
+                digitalWrite(IN4,HIGH); 
             }
             else
             {
@@ -228,42 +235,40 @@ void driveMotor(char motor, float speed)
                 digitalWrite(IN4,LOW);
             }
             
-            sense2 = direction;
-            setPWM(motor, (char)speed); 
+            analogWrite(PWM2, speed); 
+
+            //setPWM(motor, (char)speed); 
         }
     }   
 }
 /////////////////////////////////////////////////////////////////////////////
-void InitPWM()
-{
-    TCCR0A = 0xA3; // fast pwm mode, non inverted for both 
-    TCCR0B = 0x01; // clkio => timer frequency
-    TCNT0 = 0x00; // reset count
-    OCR0A = 0; // 0 pwm1
-    OCR0B = 0; // 0 pwm2
-}
 /////////////////////////////////////////////////////////////////////////////
 void InitMotors()
 {
-    pulses1 = 0;
-    pulses2 = 0;
-    lastpulses1 = 0;
-    lastpulses2 = 0;
-    sense1 = CLOCKWISE;
-    sense2 = CLOCKWISE;
-    pulses_factor = 2.0f * PI / REVOLUTION_STEPS / SAMPLE_TIME;
 
     pinMode(IN1, OUTPUT);
     pinMode(IN2, OUTPUT);
     pinMode(IN3, OUTPUT);
     pinMode(IN4, OUTPUT);
     pinMode(PWM1, OUTPUT);
-    pinMode(PWM2, OUTPUT);  
+    pinMode(PWM2, OUTPUT); 
+    pinMode(STBY, OUTPUT);  
     pinMode(Encoder1, INPUT); 
     pinMode(Encoder2, INPUT);
 
+    digitalWrite(IN1, 0);
+    digitalWrite(IN2, 1);
+    digitalWrite(IN3, 1);
+    digitalWrite(IN4, 0);
+    digitalWrite(STBY, 1);
+    analogWrite(PWM1, 0);
+    analogWrite(PWM2, 0);    
+    
+    digitalWrite(STBY, 1);
+
     attachInterrupt(0,catchPulses1,FALLING);
-    attachInterrupt(1,catchPulses2,FALLING);
+    attachInterrupt(1,catchPulses2,FALLING);    
+
 }
 /////////////////////////////////////////////////////////////////////////////
 void InitSampling()
@@ -280,101 +285,12 @@ void InitSampling()
     e2k2 = 0.0f;
     u2k1 = 0.0f;
     
-    setpoint1 = 0.0f;
-    setpoint2 = 0.0f;
+    setpoint1 = 0.1f;
+    setpoint2 = -0.1f;
     speed1 = 0.0f;
     speed2 = 0.0f;
 
-    TCCR1A= 0x00; // both PWM off, normal mode
-    TCCR1B = 0x03; // clkio => timer frequency prescaler /64 
-    TCNT1H = 0xE7; // reset count
-    TCNT1L = 0x95; // cf2c
-
-    TIMSK1 = 0x01; // only overflow interrupt enable
-    TIFR1 = 0x00; // clear all interrupt flags
     samplingSpeeds = 0; // No speed sampling by default, it is only for Tunning PID system
     samplingFlag = 0;
 
-    pinMode(13, OUTPUT); // output for led
 }
-/////////////////////////////////////////////////////////////////////////////
-ISR(TIMER1_OVF_vect)
-{
-    TCNT1H = 0xE7; // reset count
-    TCNT1L = 0x95; // // cf2c 50ms //E795 25ms
-    
-    long temp_pulses1 = pulses1;
-    long temp_pulses2 = pulses2;
-    long delta_pulses1 = temp_pulses1 - lastpulses1;
-    long delta_pulses2 = temp_pulses2 - lastpulses2;
-
-    lastpulses1 = temp_pulses1;
-    lastpulses2 = temp_pulses2;
-
-    //float speed1 = delta_pulses1 * 2.0f * PI / REVOLUTION_STEPS / SAMPLE_TIME;
-    //float speed2 = delta_pulses2 * 2.0f * PI / REVOLUTION_STEPS / SAMPLE_TIME;
-
-    speed1 = delta_pulses1 * pulses_factor;
-    speed2 = delta_pulses2 * pulses_factor;
-    
-    if (samplingSpeeds == 1)
-    {
-        samplingFlag = 1;
-    }
-
-    float e1k = setpoint1 - speed1;
-    float e2k = setpoint2 - speed2;
-
-    float u1k;
-    if (setpoint1 > SetpointThreshold || setpoint1 < -SetpointThreshold )
-    {
-        u1k = constant_kc * (e1k - e1k1) + constant_ki * e1k + u1k1 + constant_kd * (
-                    e1k - 2 * e1k1 + e1k2);
-        if (u1k > 255.0f)
-        {
-            u1k = 255.0f;
-        }
-
-        if (u1k < -255.0f)
-        {
-            u1k = -255.0f;
-        }
-    }
-    else    
-    {
-        u1k = 0;
-    }
-
-    float u2k;
-    if (setpoint2 > SetpointThreshold || setpoint2 < -SetpointThreshold)
-    {
-        u2k = constant_kc * (e2k - e2k1) + constant_ki * e2k + u2k1 + constant_kd * (
-                    e2k - 2 * e2k1 + e2k2);
-        if (u2k > 255.0f)
-        {
-            u2k = 255.0f;
-        }
-
-        if(u2k < -255.0f)
-        {
-            u2k = -255.0f;
-        }
-    }
-    else 
-    {
-        u2k = 0;
-    }
-
-    driveMotor(1,u1k);
-    driveMotor(2,u2k);
-
-    e1k2 = e1k1;
-    e1k1 = e1k;
-    u1k1 = u1k;
-
-    e2k2 = e2k1;
-    e2k1 = e2k;
-    u2k1 = u2k;
-
-}
-/////////////////////////////////////////////////////////////////////////////
