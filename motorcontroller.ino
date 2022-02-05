@@ -101,27 +101,26 @@ void catchPulses2()
 
 void setup() 
 {
+    Serial.begin(9600); 
     Serial.println("Setup");
 
     InitMotors();
     //InitPWM();
-    //InitSampling();
-/*    TCCR0B = 0; 
+    InitSampling();
+    TCCR0B = 0; 
     OCR2A = reload;
     TCCR2A = 1<<WGM21;
     TCCR2B = (1<<CS22) | (1<<CS21) | (1<<CS20);
-    TIMSK2 = (1<<OCIE2A);*/
+    TIMSK2 = (1<<OCIE2A);
 
     interrupts();
-    setpoint1 = 0.1f;
-    setpoint2 = -0.1f;
+    setpoint1 = 0.5f;
+    setpoint2 = -0.5f;
 
 } 
 ///////////////////////////////////////////////////////////////////////////// 
 void loop() 
 {
-    driveMotor(1,-255);
-    driveMotor(2,255);
     if (samplingFlag)
     {       
         ptr = ((uint8_t*)&speed1);
@@ -293,4 +292,81 @@ void InitSampling()
     samplingSpeeds = 0; // No speed sampling by default, it is only for Tunning PID system
     samplingFlag = 0;
 
+}
+
+ISR(TIMER2_COMPA_vect)
+{
+    OCR2A = reload;
+    long temp_pulses1 = pulses1;
+    long temp_pulses2 = pulses2;
+    long delta_pulses1 = temp_pulses1 - lastpulses1;
+    long delta_pulses2 = temp_pulses2 - lastpulses2;
+
+    lastpulses1 = temp_pulses1;
+    lastpulses2 = temp_pulses2;
+
+    //float speed1 = delta_pulses1 * 2.0f * PI / REVOLUTION_STEPS / SAMPLE_TIME;
+    //float speed2 = delta_pulses2 * 2.0f * PI / REVOLUTION_STEPS / SAMPLE_TIME;
+
+    speed1 = delta_pulses1 * pulses_factor;
+    speed2 = delta_pulses2 * pulses_factor;
+
+    if (samplingSpeeds == 1)
+    {
+        samplingFlag = 1;
+    }
+
+    float e1k = setpoint1 - speed1;
+    float e2k = setpoint2 - speed2;
+
+
+    float u1k;
+    if (setpoint1 > SetpointThreshold || setpoint1 < -SetpointThreshold )
+    {
+        u1k = constant_kc * (e1k - e1k1) + constant_ki * e1k + u1k1 + constant_kd * (
+                    e1k - 2 * e1k1 + e1k2);
+        if (u1k > 255.0f)
+        {
+            u1k = 255.0f;
+        }
+
+        if (u1k < -255.0f)
+        {
+            u1k = -255.0f;
+        }
+    }
+    else    
+    {
+        u1k = 0;
+    }
+
+    float u2k;
+    if (setpoint2 > SetpointThreshold || setpoint2 < -SetpointThreshold)
+    {
+        u2k = constant_kc * (e2k - e2k1) + constant_ki * e2k + u2k1 + constant_kd * (
+                    e2k - 2 * e2k1 + e2k2);
+        if (u2k > 255.0f)
+        {
+            u2k = 255.0f;
+        }
+
+        if(u2k < -255.0f)
+        {
+            u2k = -255.0f;
+        }
+    }
+    else 
+    {
+        u2k = 0;
+    }
+    driveMotor(1,u1k);
+    driveMotor(2,u2k);
+
+    e1k2 = e1k1;
+    e1k1 = e1k;
+    u1k1 = u1k;
+
+    e2k2 = e2k1;
+    e2k1 = e2k;
+    u2k1 = u2k;
 }
