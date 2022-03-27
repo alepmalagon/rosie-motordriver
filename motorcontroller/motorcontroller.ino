@@ -5,6 +5,13 @@
 //Ask gvieralopez@gmail.com for the hardware schematics
 
 
+#include <ros.h>
+#include <ros/time.h>
+#include <std_msgs/UInt16.h>
+#include <geometry_msgs/Twist.h>
+
+ros::NodeHandle  nh;
+
 //////////////////////////////////////////////////////////////////////////
 //Defining Arduino's Pins
 /////////////////////////////////////////////////////////////////////////////
@@ -44,6 +51,7 @@
 #define COUNTERCLOCKWISE    1
 #define REVOLUTION_STEPS    620
 #define SAMPLE_TIME         0.01
+#define WHEEL_DIST          0.175
 /////////////////////////////////////////////////////////////////////////////
 //Defining variables
 /////////////////////////////////////////////////////////////////////////////
@@ -78,6 +86,18 @@ volatile char samplingFlag; // Raises when is time to send a sample
 //Defining funtions
 /////////////////////////////////////////////////////////////////////////////
 
+void twist_to_setpoints(const geometry_msgs::Twist cmd_vel) {
+    float setpoint1 = (cmd_vel.angular.z *WHEEL_DIST)/2 + cmd_vel.linear.x;
+    float setpoint2 = cmd_vel.angular.z*2-setpoint1;
+}
+
+std_msgs::UInt16 wheel_speed_1;
+std_msgs::UInt16 wheel_speed_2;
+
+ros::Subscriber<const geometry_msgs::Twist> sub("cmd_vel", twist_to_setpoints);
+
+ros::Publisher wheel_1_pub("rwheel", &wheel_speed_1);
+ros::Publisher wheel_2_pub("lwheel", &wheel_speed_2);
 
 
 void catchPulses1()
@@ -107,6 +127,10 @@ void catchPulses2()
 
 void setup() 
 {
+    nh.initNode();
+    nh.subscribe(sub);
+    nh.advertise(wheel_1_pub);
+    nh.advertise(wheel_2_pub);
 
     InitMotors();
     //InitPWM();
@@ -117,7 +141,8 @@ void setup()
     TCCR2B = (1<<CS22) | (1<<CS21) | (1<<CS20);
     TIMSK2 = (1<<OCIE2A);
 
-    Serial.begin(9600); 
+    nh.initNode();
+    nh.subscribe(sub);
 
     interrupts();
     setpoint1 = 0.0f;
@@ -127,69 +152,8 @@ void setup()
 ///////////////////////////////////////////////////////////////////////////// 
 void loop() 
 {
-    if (samplingFlag)
-    {       
-        ptr = ((uint8_t*)&speed1);
-        Serial.write(ptr,4);
-        ptr = ((uint8_t*)&speed2);  
-        Serial.write(ptr,4);
-        samplingFlag = 0;
-    }
-    if(Serial.available() > 0)
-    {
-        int x = Serial.read();
-        switch (x)
-        {
-        case COMMAND_SETPIDPARAM:
-            while(Serial.available() < 4);
-            Serial.readBytes(buffer, 4);
-            constant_kc = *(float*)buffer;
 
-            while(Serial.available() < 4);
-            Serial.readBytes(buffer, 4);
-            constant_ki = *(float*)buffer;
 
-            while(Serial.available() < 4);
-            Serial.readBytes(buffer, 4);
-            constant_kd = *(float*)buffer;
-            break;
-        case COMMAND_SETPOINT:
-            while(Serial.available() < 4);
-            Serial.readBytes(buffer, 4);
-            setpoint1 = *(float*)buffer;
-            //dtostrf(setpoint1, 10, 2, buff);
-
-            while(Serial.available() < 4);
-            Serial.readBytes(buffer, 4);
-            setpoint2 = *(float*)buffer;
-            break;
-        case COMMAND_GETSTATE:
-            if(samplingSpeeds == 0)
-            {
-                Serial.write(COMMAND_GETSTATE_RESPONSE);
-                ptr = (uint8_t*)&pulses1;
-                Serial.write(ptr,4);
-                ptr = (uint8_t*)&pulses2;
-                Serial.write(ptr,4);
-                Serial.write(battery_status);
-            }
-            break;
-        case COMMAND_ENCODER_RESET:
-            pulses1 = 0;
-            pulses2 = 0;
-            lastpulses1 = 0;
-            lastpulses2 = 0;
-            break;
-        case COMMAND_START_SAMPLING_SPEEDS:
-            samplingSpeeds = 1;
-            break;
-        case COMMAND_STOP_SAMPLING_SPEEDS:
-            samplingSpeeds = 0;
-            break;
-        default:
-            break;
-        }
-    }
 }
 /////////////////////////////////////////////////////////////////////////////
 void driveMotor(char motor, float speed)
@@ -321,11 +285,17 @@ ISR(TIMER2_COMPA_vect)
     lastpulses1 = temp_pulses1;
     lastpulses2 = temp_pulses2;
 
-    //speed1 = delta_pulses1 * 2.0f * PI / REVOLUTION_STEPS / SAMPLE_TIME;
-    //speed2 = delta_pulses2 * 2.0f * PI / REVOLUTION_STEPS / SAMPLE_TIME;
+    speed1 = delta_pulses1 * 2.0f * PI / REVOLUTION_STEPS / SAMPLE_TIME;
+    speed2 = delta_pulses2 * 2.0f * PI / REVOLUTION_STEPS / SAMPLE_TIME;
 
-    speed1 = delta_pulses1 * pulses_factor;
-    speed2 = delta_pulses2 * pulses_factor;
+    wheel_speed_1.data = speed1;
+    wheel_speed_2.data = speed2;
+
+    wheel_1_pub.publish(&wheel_speed_1);
+    wheel_2_pub.publish(&wheel_speed_2);
+
+    // speed1 = delta_pulses1 * pulses_factor;
+    // speed2 = delta_pulses2 * pulses_factor;
 
     if (samplingSpeeds == 1)
     {
